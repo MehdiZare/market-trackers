@@ -41,6 +41,14 @@ const FINGERPRINT_KEY = "cot.row-fields";
 const REWALK_DAYS = 7;
 /** Canary probe window — wide enough that a between-Tuesdays gap never looks like an outage. */
 const CANARY_PROBE_DAYS = 30;
+/**
+ * First-contact lookback. COT is weekly (Tuesday as-of, published the following
+ * Friday afternoon), so a cold store walking only the default 3 days often
+ * contains no report date — the sync completes with 0 rows while the API has
+ * data. 14 days covers the longest on-time gap (Friday morning, previous
+ * Tuesday is 10 days back) plus a holiday release slipped to the next Monday.
+ */
+const COLD_START_DAYS = 14;
 
 function buildFetch(ctx: SourceContext): PoliteFetch {
   return createCftcFetch({
@@ -135,7 +143,9 @@ export const cftcSource: TrackerSource = {
     const watermark = opts.full ? null : await ctx.store.getWatermark("cftc", WATERMARK_KEY);
     const start =
       opts.since ??
-      (watermark ? addDays(watermark, -REWALK_DAYS) : addDays(today, -ctx.config.backfillDays));
+      (watermark
+        ? addDays(watermark, -REWALK_DAYS)
+        : addDays(today, -Math.max(ctx.config.backfillDays, COLD_START_DAYS)));
     const untilBound = opts.until ?? today;
     const end = untilBound > today ? today : untilBound;
     const startDate = start > end ? end : start;

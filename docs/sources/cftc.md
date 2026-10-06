@@ -26,9 +26,13 @@
 
 - Walks a single `[start, end]` report-date window ascending, via `$limit`/`$offset` paging,
   until a short page comes back. `start` is `--since`, or `cot.lastReportDate - 7 days` (one
-  report-week — reports occasionally revise after first posting), or `backfillDays` back from
-  today with no watermark; `end` is `--until`, defaulting to today. `--full` ignores the
-  watermark and re-walks from `backfillDays` back.
+  report-week — reports occasionally revise after first posting), or
+  `max(backfillDays, 14)` back from today with no watermark. The 14-day floor matters because
+  the report is weekly (Tuesday as-of, published the following Friday): the default 3-day
+  backfill often contains no report date, so a first sync (and `--full`) would complete with
+  0 rows while the API has data. `end` is `--until`, defaulting to today. `--full` ignores the
+  watermark and re-walks that same cold-start window. `--limit` caps rows inside the window; it
+  does not widen it. A deeper history is `backfill` (or a larger `backfillDays` / `--since`).
 - `--limit` counts raw rows fetched (one row is one report-date × contract, so this maps 1:1 to
   output rows attempted).
 - Watermark `cot.lastReportDate` advances to the max `reportDate` among succeeded rows, only on a

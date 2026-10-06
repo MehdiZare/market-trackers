@@ -134,6 +134,49 @@ describe("cftcSource.sync", () => {
     await store.close();
   });
 
+  it("cold-starts at least 14 days so a weekly report is not missed", async () => {
+    const { ctx, store, captured } = await makeCtx();
+    // No --since and no watermark. Default backfillDays is 3 (2026-08-21..2026-08-24),
+    // which contains neither fixture report date (2026-08-05, 2026-08-12). The 14-day
+    // floor reaches 2026-08-10 and ingests the 2026-08-12 page.
+    const result = await cftcSource.sync(ctx);
+    expect(captured[0]?.where).toBe(
+      "report_date_as_yyyy_mm_dd >= '2026-08-10T00:00:00' AND report_date_as_yyyy_mm_dd <= '2026-08-24T00:00:00'",
+    );
+    // Gold succeeds; the malformed Silver row on the same date fails as a whole row.
+    expect(result.parse).toEqual({ attempted: 2, succeeded: 1 });
+    expect(result.rowsUpserted).toBe(1);
+    expect(await store.count("cot-reports")).toBe(1);
+    expect(await store.getWatermark("cftc", "cot.lastReportDate")).toBe("2026-08-12");
+    await store.close();
+  });
+
+  it("honors a backfillDays setting wider than the cold-start floor", async () => {
+    const { ctx, store, captured } = await makeCtx();
+    ctx.config = { ...ctx.config, backfillDays: 30 };
+    const result = await cftcSource.sync(ctx);
+    expect(captured[0]?.where).toBe(
+      "report_date_as_yyyy_mm_dd >= '2026-07-25T00:00:00' AND report_date_as_yyyy_mm_dd <= '2026-08-24T00:00:00'",
+    );
+    expect(result.parse).toEqual({ attempted: 4, succeeded: 3 });
+    expect(result.rowsUpserted).toBe(3);
+    await store.close();
+  });
+
+  it("honors --full by ignoring the watermark and using the cold-start window", async () => {
+    const { ctx, store, captured } = await makeCtx();
+    await store.setWatermark("cftc", "cot.lastReportDate", "2026-08-22");
+    const result = await cftcSource.sync(ctx, { full: true });
+    // A watermark re-walk would start at 2026-08-15. --full must not.
+    expect(captured[0]?.where).toBe(
+      "report_date_as_yyyy_mm_dd >= '2026-08-10T00:00:00' AND report_date_as_yyyy_mm_dd <= '2026-08-24T00:00:00'",
+    );
+    expect(result.rowsUpserted).toBe(1);
+    // Watermark only moves forward, so a later stored date is left in place.
+    expect(await store.getWatermark("cftc", "cot.lastReportDate")).toBe("2026-08-22");
+    await store.close();
+  });
+
   it("honors --limit without advancing the watermark", async () => {
     const { ctx, store } = await makeCtx();
     const result = await cftcSource.sync(ctx, { since: "2026-08-01", limit: 2 });
